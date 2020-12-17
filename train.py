@@ -52,6 +52,9 @@ parser.add_argument('--val_batch_size', metavar='SIZE', type=int, default=2, hel
 parser.add_argument('--val_batch_count', metavar='N', type=int, default=40, help='Number of batches for validation.')
 parser.add_argument('--val_every', metavar='STEPS', type=int, default=0, help='Calculate validation loss every STEPS steps.')
 
+parser.add_argument('--max_train_step', type=int, default=None, help='max train step')
+parser.add_argument('--train_sample_seed', type=int, default=None, help='random seed for sample data')
+
 
 def maketree(path):
     try:
@@ -172,7 +175,7 @@ def main():
 
         print('Loading dataset...')
         chunks = load_dataset(enc, args.dataset, args.combine, encoding=args.encoding)
-        data_sampler = Sampler(chunks)
+        data_sampler = Sampler(chunks, seed=args.train_sample_seed)
         if args.val_every > 0:
             if args.val_dataset:
                 val_chunks = load_dataset(enc, args.val_dataset, args.combine, encoding=args.encoding)
@@ -195,6 +198,9 @@ def main():
             # Add 1 so we don't immediately try to save again
             with open(counter_path, 'r') as fp:
                 counter = int(fp.read()) + 1
+
+        if args.max_train_step is not None and counter >= args.max_train_step:
+            exit("Current checkpoint counter {} has already reach the max train step.".format(counter))
 
         def save():
             maketree(os.path.join(CHECKPOINT_DIR, args.run_name))
@@ -250,12 +256,22 @@ def main():
         def sample_batch():
             return [data_sampler.sample(1024) for _ in range(args.batch_size)]
 
-
         avg_loss = (0.0, 0.0)
         start_time = time.time()
 
         try:
             while True:
+                if args.max_train_step is not None and counter >= args.max_train_step:
+                    print(
+                        "The train step to the max count {}"
+                        ", it's going to save and generate sample".format(args.max_train_step)
+                    )
+                    counter -= 1
+                    save()
+                    generate_samples()
+                    print("Finished")
+                    break
+
                 if counter % args.save_every == 0:
                     save()
                 if counter % args.sample_every == 0:
@@ -280,7 +296,7 @@ def main():
                             avg_loss[1] * 0.99 + 1.0)
 
                 print(
-                    '[{counter} | {time:2.2f}] loss={loss:2.2f} avg={avg:2.2f}'
+                    '[{counter} | {time:2.3f}] loss={loss:2.5f} avg={avg:2.5f}'
                     .format(
                         counter=counter,
                         time=time.time() - start_time,
